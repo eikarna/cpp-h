@@ -5,10 +5,23 @@
 #include <fstream>
 #include <sstream>
 #include <mutex>
+
+// Platform-specific includes and definitions
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#define open _open
+#define close _close
+#define fstat _fstat
+#define read _read
+#define stat _stat
+#define O_RDONLY _O_RDONLY
+#else
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 std::mutex file_mutex;
 
@@ -31,6 +44,18 @@ std::string read_file_content(const std::string &path) {
     }
     size_t file_size = st.st_size;
 
+#ifdef _WIN32
+    // Windows-specific file reading
+    char* buffer = new char[file_size];
+    if (read(fd, buffer, file_size) == -1) {
+        std::cerr << "Failed to read file: " << strerror(errno) << std::endl;
+        close(fd);
+        delete[] buffer;
+        return "";
+    }
+    std::string content(buffer, file_size);
+    delete[] buffer;
+#else
     // Memory-map the file
     char *mapped = static_cast<char *>(mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0));
     if (mapped == MAP_FAILED) {
@@ -44,6 +69,8 @@ std::string read_file_content(const std::string &path) {
 
     // Unmap and close file
     munmap(mapped, file_size);
+#endif
+
     close(fd);
 
     return content;
@@ -67,8 +94,11 @@ void server_data_handler(const httplib::Request &req, httplib::Response &res) {
 
 int main() {
     using namespace httplib;
-    // Ignore SIGPIPE signal
+
+#ifndef _WIN32
+    // Ignore SIGPIPE signal on Unix-like systems
     signal(SIGPIPE, SIG_IGN);
+#endif
 
     // Create server instance with SSL support
     SSLServer svr("./certs/growtopia.pem", "./certs/growtopia.key.pem");
@@ -93,9 +123,9 @@ int main() {
     }
 
     // Enable optimization for preventing DoS/DDoS attack
-    svr.set_read_timeout(1, 0); // 1 seconds
+    svr.set_read_timeout(1, 0); // 1 second
     svr.set_keep_alive_max_count(1); // Limit maximum keep-alive connections
-    svr.set_payload_max_length(1 * 1024 * 1024); // Set maximum payload length to 2 MB
+    svr.set_payload_max_length(1 * 1024 * 1024); // Set maximum payload length to 1 MB
 
     // Start server on port 443 (HTTPS default)
     std::cout << "Starting server on port 443" << std::endl;
