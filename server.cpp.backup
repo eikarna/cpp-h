@@ -1,17 +1,15 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
-#define CPPHTTPLIB_TCP_NODELAY true
-#define CPPHTTPLIB_THREAD_POOL_COUNT 8192
-#define CPPHTTPLIB_RECV_BUFSIZ size_t(1024u)
 #include "httplib.h"
 #include <signal.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <mutex>
 #include <unordered_map>
 #include <chrono>
-#include <atomic>
-#include <shared_mutex>
 #include <thread>
+#include <vector>
+#include <atomic>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -25,46 +23,60 @@
 #else
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/resource.h>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
 
-std::unordered_map<std::string, std::atomic<int>> ip_request_count;
+std::mutex file_mutex;
+std::mutex rate_limit_mutex;
+std::unordered_map<std::string, int> ip_request_count;
 std::unordered_map<std::string, std::chrono::steady_clock::time_point> ip_blocked_until;
-std::shared_mutex cache_mutex;
-std::string server_data_cache;
 
-const int RATE_LIMIT = 20; // Max requests per IP per second
+const int RATE_LIMIT = 10; // Max requests per IP per seconds
 const int BLOCK_DURATION = 5; // Block duration in seconds
 
-void log_message(const std::string &message) {
-    static std::mutex log_mutex;
-    std::lock_guard<std::mutex> lock(log_mutex);
-    // Print to console
-    std::cerr << message << std::endl;
-    // Save to server.log
-    std::ofstream log_file("server.log", std::ios::app);
-    log_file << message << std::endl;
-}
-
 std::string read_file_content(const std::string &path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) {
+    std::lock_guard<std::mutex> lock(file_mutex);
+
+    int fd = open(path.c_str(), O_RDONLY);
+    if (fd == -1) {
         std::cerr << "Failed to open file: " << strerror(errno) << std::endl;
         return "";
     }
 
-    std::ostringstream contents;
-    contents << file.rdbuf();
-    file.close();
+    struct stat st;
+    if (fstat(fd, &st) == -1) {
+        std::cerr << "Failed to get file size: " << strerror(errno) << std::endl;
+        close(fd);
+        return "";
+    }
+    size_t file_size = st.st_size;
 
-    return contents.str();
-}
+#ifdef _WIN32
+    char* buffer = new char[file_size];
+    if (read(fd, buffer, file_size) == -1) {
+        std::cerr << "Failed to read file: " << strerror(errno) << std::endl;
+        close(fd);
+        delete[] buffer;
+        return "";
+    }
+    std::string content(buffer, file_size);
+    delete[] buffer;
+#else
+    char *mapped = static_cast<char *>(mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0));
+    if (mapped == MAP_FAILED) {
+        std::cerr << "Failed to memory-map file: " << strerror(errno) << std::endl;
+        close(fd);
+        return "";
+    }
 
-void preload_server_data() {
-    std::lock_guard<std::shared_mutex> lock(cache_mutex);
-    server_data_cache = read_file_content("server_data.txt");
+    std::string content(mapped, file_size);
+    munmap(mapped, file_size);
+#endif
+
+    close(fd);
+
+    return content;
 }
 
 void default_handler(const httplib::Request &req, httplib::Response &res) {
@@ -72,20 +84,22 @@ void default_handler(const httplib::Request &req, httplib::Response &res) {
 }
 
 void server_data_handler(const httplib::Request &req, httplib::Response &res) {
-    std::shared_lock<std::shared_mutex> lock(cache_mutex);
-    if (server_data_cache.empty()) {
+    std::string content = read_file_content("server_data.txt");
+    if (content.empty()) {
         res.status = 500;
         res.set_content("Internal Server Error", "text/plain");
     } else {
-        res.set_content(server_data_cache, "text/plain");
+        res.set_content(content, "text/plain");
     }
 }
 
 void log_rate_limit_block(const std::string &ip) {
-    log_message("Blocking IP " + ip + " due to rate limit exceeded.");
+    std::cerr << "Blocking IP " << ip << " due to rate limit exceeded." << std::endl;
 }
 
 bool rate_limit_check(const std::string &ip) {
+    std::lock_guard<std::mutex> lock(rate_limit_mutex);
+
     auto now = std::chrono::steady_clock::now();
 
     if (ip_blocked_until.find(ip) != ip_blocked_until.end()) {
@@ -93,7 +107,7 @@ bool rate_limit_check(const std::string &ip) {
             return false;
         } else {
             ip_blocked_until.erase(ip);
-            ip_request_count[ip] = 0;
+            ip_request_count.erase(ip);
         }
     }
 
@@ -101,7 +115,7 @@ bool rate_limit_check(const std::string &ip) {
 
     if (ip_request_count[ip] > RATE_LIMIT) {
         ip_blocked_until[ip] = now + std::chrono::seconds(BLOCK_DURATION);
-        ip_request_count[ip] = 0;
+        ip_request_count.erase(ip);
         log_rate_limit_block(ip);
         return false;
     }
@@ -109,23 +123,8 @@ bool rate_limit_check(const std::string &ip) {
     return true;
 }
 
-void configure_system_limits() {
-#ifndef _WIN32
-    // Increase file descriptors limit
-    struct rlimit limit;
-    limit.rlim_cur = 65536;
-    limit.rlim_max = 65536;
-    if (setrlimit(RLIMIT_NOFILE, &limit) != 0) {
-        std::cerr << "Failed to set file descriptor limit: " << strerror(errno) << std::endl;
-    }
-#endif
-}
-
 int main() {
     using namespace httplib;
-
-    preload_server_data();
-    configure_system_limits();
 
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
@@ -138,20 +137,14 @@ int main() {
         return -1;
     }
 
-    // Configure SSL context for performance
+    // Configure SSL context for session resumption
     SSL_CTX* ssl_ctx = svr.ssl_context();
     if (ssl_ctx) {
         SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_SERVER);
-        SSL_CTX_set_timeout(ssl_ctx, 300); // 5 minutes session timeout
+        SSL_CTX_set_timeout(ssl_ctx, 120); // 2 minutes session timeout
         SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_TICKET); // Disable session tickets for simplicity
-        SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS); // Release memory buffers when not in use
+        SSL_CTX_set_mode(ssl_ctx, SSL_MODE_AUTO_RETRY); // Automatically retry on TLS handshake errors
     }
-
-    svr.set_file_request_handler([](const Request &req, Response &res) {
-        if (req.path.rfind("/cache", 0) == 0) {
-            log_message("IP " + req.remote_addr + " accessing cache at: " + req.path);
-        }
-    });
 
     svr.Get("/", [](const Request &req, Response &res) {
         std::string client_ip = req.remote_addr;
@@ -184,15 +177,33 @@ int main() {
     }
 
     // Increase timeouts to handle more concurrent connections
-    svr.set_read_timeout(1, 0); // 1 second read timeout
+    svr.set_read_timeout(5, 0); // 5 seconds read timeout
     svr.set_write_timeout(5, 0); // 5 seconds write timeout
-    svr.set_keep_alive_max_count(3); // Allow up to 3 keep-alive requests
+    svr.set_keep_alive_max_count(10); // Allow up to 10 keep-alive requests
     svr.set_payload_max_length(1 * 1024 * 1024); // Set maximum payload length to 1 MB
 
+    const int thread_pool_size = std::thread::hardware_concurrency() * 2; // Increase thread pool size
+    std::vector<std::thread> thread_pool;
+    std::atomic<bool> stop_flag{false};
+
+    for (int i = 0; i < thread_pool_size; ++i) {
+        thread_pool.emplace_back([&svr, &stop_flag]() {
+            while (!stop_flag.load()) {
+                svr.listen_after_bind();
+            }
+        });
+    }
+
     std::cout << "Starting server on port 443" << std::endl;
-    if (!svr.listen("0.0.0.0", 443)) {
+    if (!svr.bind_to_port("0.0.0.0", 443)) {
         std::cerr << "Failed to bind to port 443" << std::endl;
-        return -1;
+        stop_flag.store(true);
+    }
+
+    for (auto &t : thread_pool) {
+        if (t.joinable()) {
+            t.join();
+        }
     }
 
     return 0;
