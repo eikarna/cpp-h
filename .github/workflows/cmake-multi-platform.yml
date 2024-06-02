@@ -32,7 +32,7 @@ jobs:
     - name: Set OpenSSL root directory (Windows only)
       if: matrix.os == 'windows-latest'
       run: |
-        echo "OPENSSL_ROOT_DIR=C:/OpenSSL" >> $GITHUB_ENV
+        echo "OPENSSL_ROOT_DIR=C:\OpenSSL" >> $GITHUB_ENV
     
     - name: Set reusable strings
       id: strings
@@ -46,7 +46,7 @@ jobs:
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-        -DOPENSSL_ROOT_DIR=C:/OpenSSL
+        -DOPENSSL_ROOT_DIR=C:\OpenSSL
         -S ${{ github.workspace }}
 
     - name: Configure CMake (Linux)
