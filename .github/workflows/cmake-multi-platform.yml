@@ -28,6 +28,11 @@ jobs:
         Expand-Archive -Path .\openssl-3.3.0.zip -DestinationPath C:\OpenSSL
         $env:PATH += ";C:\OpenSSL\bin"
         openssl version
+
+    - name: Set OpenSSL root directory (Windows only)
+      if: matrix.os == 'windows-latest'
+      run: |
+        echo "OPENSSL_ROOT_DIR=C:/OpenSSL" >> $GITHUB_ENV
     
     - name: Set reusable strings
       id: strings
