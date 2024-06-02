@@ -16,7 +16,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         build_type: [Release]
         cpp_compiler: [g++, clang++]
-        openssl_version: ["3.0.0"] # Specify the desired OpenSSL version
+        openssl_version: ["3.0.0"]  # Specify the desired OpenSSL version
 
     steps:
     - uses: actions/checkout@v4
@@ -38,12 +38,21 @@ jobs:
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
-    - name: Configure CMake
+    - name: Configure CMake (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
       run: |
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-        ${{ matrix.os == 'windows-latest' ? '-DOPENSSL_ROOT_DIR=C:/OpenSSL' : '' }}
+        -DOPENSSL_ROOT_DIR=C:/OpenSSL
+        -S ${{ github.workspace }}
+
+    - name: Configure CMake (Linux)
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -S ${{ github.workspace }}
 
     - name: Build
