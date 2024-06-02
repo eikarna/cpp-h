@@ -34,3 +34,4 @@
 # Other
 server
 *.backup
+test.*
