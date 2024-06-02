@@ -1,8 +1,24 @@
-# cpp-h
+# ⚡cpp-h
 Simple HTTP/s Server with static files support for Growtopia Private Server.
 
 
-# Benchmark Result
+# ⚙️ How To Build
+### 🏃🏻‍♂️Release
+```sh
+mkdir -p build/release
+cd build/release
+cmake -DCMAKE_BUILD_TYPE=Release ../..
+cmake --build .
+```
+### 🚶🏻‍♂️Debug
+```sh
+mkdir -p build/debug
+cd build/debug
+cmake -DCMAKE_BUILD_TYPE=Debug ../..
+cmake --build .
+```
+
+# 📊 Benchmark Result
 For benchmark test/stress test, i use [wrk](https://github.com/wg/wrk) in Android 13 ARM64 (8 Cores, 4x2.4GHz | 4x
 1.8GHz) with build command:
 ```cpp
