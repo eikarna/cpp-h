@@ -24,8 +24,8 @@ jobs:
     - name: Download and extract OpenSSL (Windows only)
       if: matrix.os == 'windows-latest'
       run: |
-        Invoke-WebRequest -Uri https://github.com/OpenSSL/openssl/releases/download/OpenSSL_3.0.0/OpenSSL_3.0.0_Win64.zip -OutFile OpenSSL_3.0.0_Win64.zip
-        Expand-Archive -Path .\OpenSSL_3.0.0_Win64.zip -DestinationPath C:\OpenSSL
+        Invoke-WebRequest -Uri https://download.firedaemon.com/FireDaemon-OpenSSL/openssl-3.3.0.zip
+        Expand-Archive -Path .\openssl-3.3.0.zip -DestinationPath C:\OpenSSL
         $env:PATH += ";C:\OpenSSL\bin"
         openssl version
     
