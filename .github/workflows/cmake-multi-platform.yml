@@ -16,14 +16,21 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         build_type: [Release]
         cpp_compiler: [g++, clang++]
-        exclude:
-          - os: windows-latest
-            cpp_compiler: clang++
-          - os: ubuntu-latest
-            cpp_compiler: cl
+        openssl_version: "3.0.0"  # Specify the desired OpenSSL version
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Update OpenSSL (Windows only)
+      if: ${{ matrix.os == 'windows-latest' }}
+      run: |
+        # Download and install the desired OpenSSL version
+        curl -LO https://github.com/OpenSSL/openssl/releases/download/OpenSSL_${{ matrix.openssl_version }}/OpenSSL_${{ matrix.openssl_version }}_Win64.zip
+        Expand-Archive -Path .\OpenSSL_${{ matrix.openssl_version }}_Win64.zip -DestinationPath C:\OpenSSL
+        # Add OpenSSL bin directory to the PATH environment variable
+        $env:PATH += ";C:\OpenSSL\bin"
+        # Verify OpenSSL installation
+        openssl version
 
     - name: Set reusable strings
       id: strings
@@ -36,11 +43,10 @@ jobs:
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        ${{ matrix.os == 'windows-latest' ? '-DOPENSSL_ROOT_DIR=C:/OpenSSL' : '' }}
         -S ${{ github.workspace }}
 
     - name: Build
-      env:
-        CXX: g++
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
     - name: Test
