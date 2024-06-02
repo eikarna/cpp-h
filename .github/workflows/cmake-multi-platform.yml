@@ -24,12 +24,9 @@ jobs:
     - name: Update OpenSSL (Windows only)
       if: ${{ matrix.os == 'windows-latest' }}
       run: |
-        # Download and install the desired OpenSSL version
         curl -LO https://github.com/OpenSSL/openssl/releases/download/OpenSSL_${{ matrix.openssl_version }}/OpenSSL_${{ matrix.openssl_version }}_Win64.zip
         Expand-Archive -Path .\OpenSSL_${{ matrix.openssl_version }}_Win64.zip -DestinationPath C:\OpenSSL
-        # Add OpenSSL bin directory to the PATH environment variable
         $env:PATH += ";C:\OpenSSL\bin"
-        # Verify OpenSSL installation
         openssl version
 
     - name: Set reusable strings
